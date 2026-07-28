@@ -1,0 +1,13 @@
+[project]
+name = "rag-parse-chunk-eval"
+version = "0.1.0"
+description = "Offline comparison of PDF parsers for stage 4 (eval only, not shipped)"
+requires-python = ">=3.13"
+dependencies = [
+    "liteparse>=2.6.0",
+    "pymupdf4llm>=0.0.17",
+    "markdown>=3.6",
+]
+
+[dependency-groups]
+dev = []
