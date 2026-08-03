@@ -5,3 +5,4 @@ __pycache__/
 .env
 eval/out/*
 tests/fixtures/ecb_press_sample.html
+.claude/settings.local.json

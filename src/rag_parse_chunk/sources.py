@@ -23,6 +23,15 @@ class SourceConfig(BaseModel):
     # stage's parsers.py): unset = the layout engine, 'fast' = the ~5x faster
     # mode that finds no tables. Only the parse_chunk stage reads it.
     pdf_parser: str | None = None
+    # confluence sources: the Cloud site, the space, and the label that opts a
+    # page into the corpus; include_attachments also lists each labelled page's
+    # files as their own documents. Removing the label removes the page from the
+    # corpus — the space+label listing is a complete snapshot, so the delta stage
+    # reads the absence as a deletion.
+    base_url: str | None = None
+    space_key: str | None = None
+    label: str | None = None
+    include_attachments: bool = False
     # False for sources that only show their newest items (an RSS feed lists
     # about 15): a document missing from a run has probably just dropped off
     # the end of the feed, so the delta stage must not treat it as deleted.

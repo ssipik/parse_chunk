@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import logging
 from dataclasses import dataclass, field
@@ -19,6 +20,8 @@ from rag_parse_chunk.db import (
     staged_nodes,
 )
 from rag_parse_chunk.parsers import (
+    CONFLUENCE_CONTENT_TYPE,
+    EmptyDocument,
     ParseFailure,
     detect_content_type,
     parse_document,
@@ -37,13 +40,18 @@ _RETRYABLE = ("pending", "error")
 # doc_url scheme the local_files reader emits, relative to the source's path
 _FILE_URL_PREFIX = "file:///"
 
+# text_sha of a document with no text. Stored rather than NULL so a page that
+# is still empty next run compares equal in unchanged_post_parse.
+EMPTY_TEXT_SHA = hashlib.sha256(b"").hexdigest()
+
 
 @dataclass
 class ParseBatchReport:
     batch_id: int
     counts: dict[str, int] = field(
         default_factory=lambda: {
-            "staged": 0, "skipped_unchanged": 0, "error": 0, "nodes": 0,
+            "staged": 0, "skipped_unchanged": 0, "skipped_empty": 0, "error": 0,
+            "nodes": 0,
             # docs that parsed but yielded almost no text per page — charts,
             # scans, or a parser that could not read the layout
             "low_text": 0,
@@ -79,14 +87,17 @@ def base_metadata(
     later.
 
     This becomes the Qdrant payload, so it carries only what a query needs:
-    the identity to filter and delete on, and the fields a citation shows.
-    The hashes stay on ingest_batch_docs — no query reads them.
+    the identity to filter and delete on, the fields the agent filters on
+    (source_system, source_id, doc_type, published_at), and the fields a
+    citation shows. The hashes stay on ingest_batch_docs — no query reads them.
     """
     manifest_row = manifest_row or {}
     extra = manifest_row.get("extra") or {}
     published = manifest_row.get("published_at")
     return {
         "manifest_id": doc["manifest_id"],
+        "source_system": manifest_row.get("source_system"),
+        "source_id": manifest_row.get("source_id"),
         "source_url": manifest_row.get("doc_url"),
         "title": manifest_row.get("title"),
         "doc_type": extra.get("doc_type") or (cfg.doc_type if cfg else None),
@@ -96,8 +107,25 @@ def base_metadata(
     }
 
 
+def _auth_headers(cfg: SourceConfig | None, settings) -> dict[str, str]:
+    """Per-request auth for this source. Applied per request, not on the client,
+    because one batch mixes sources: Confluence credentials must not ride along
+    on a public ECB fetch."""
+    if cfg is None or cfg.type != "confluence":
+        return {}
+    if not settings.confluence_email or not settings.confluence_api_token:
+        raise ParseFailure(
+            f"confluence source {cfg.id!r} needs RAG_CONFLUENCE_EMAIL and "
+            f"RAG_CONFLUENCE_API_TOKEN"
+        )
+    token = base64.b64encode(
+        f"{settings.confluence_email}:{settings.confluence_api_token}".encode()
+    ).decode()
+    return {"Authorization": f"Basic {token}"}
+
+
 def _fetch(
-    client: httpx.Client, url: str, cfg: SourceConfig | None
+    client: httpx.Client, manifest_row: dict, cfg: SourceConfig | None, settings
 ) -> tuple[bytes, str | None]:
     """Raw bytes for one document, plus the served content type if there is one.
 
@@ -105,8 +133,17 @@ def _fetch(
       to the source's configured directory (see the discover reader): read
       the file under cfg.path. There is no served content type, so the
       caller works it out from the %PDF bytes and the .pdf suffix.
+    - a Confluence page — the doc_url is the human permalink, which serves the
+      whole Confluence UI, so fetch the body through the API instead.
+    - a Confluence attachment — same reason: the doc_url is the /wiki/download
+      link, which only accepts a browser session and answers Basic auth with
+      401, so fetch the bytes through the API instead.
     - everything else — HTTP(S) via httpx.
     """
+    url = manifest_row["doc_url"]
+    extra = manifest_row.get("extra") or {}
+    headers = _auth_headers(cfg, settings)
+
     if url.startswith(_FILE_URL_PREFIX):
         if cfg is None or not cfg.path:
             raise ParseFailure(
@@ -116,10 +153,90 @@ def _fetch(
         # percent-encode, so this must not unquote
         rel = url[len(_FILE_URL_PREFIX):]
         return (Path(cfg.path) / rel).read_bytes(), None
+    elif extra.get("confluence_kind") == "page":
+        page_id = extra.get("page_id")
+        if not page_id:
+            # ParseFailure, not KeyError: a malformed sighting must fail this one
+            # document, not take the whole batch down
+            raise ParseFailure(f"confluence sighting for {url} has no page_id")
+        return _fetch_confluence_page(client, page_id, cfg, headers)
+    elif extra.get("confluence_kind") == "attachment":
+        page_id = extra.get("page_id")
+        attachment_id = extra.get("attachment_id")
+        if not page_id or not attachment_id:
+            raise ParseFailure(
+                f"confluence attachment sighting for {url} has no "
+                f"page_id/attachment_id"
+            )
+        return _fetch_confluence_attachment(
+            client, page_id, attachment_id, cfg, headers
+        )
     else:
-        response = client.get(url)
+        response = client.get(url, headers=headers)
         response.raise_for_status()
         return response.content, response.headers.get("content-type")
+
+
+def _fetch_confluence_page(
+    client: httpx.Client, page_id: str, cfg: SourceConfig | None, headers: dict
+) -> tuple[bytes, str]:
+    """A Confluence page body as rendered HTML.
+
+    export_view, not the raw storage format: storage carries Confluence's own
+    macro markup (<ac:structured-macro>, <ri:attachment>), which is not HTML and
+    which the parsers cannot read. export_view has the macros expanded.
+
+    The served content type is application/json, so this hands back the
+    Confluence content type explicitly rather than let sniffing decide.
+    """
+    if cfg is None or not cfg.base_url:
+        raise ParseFailure(
+            f"confluence page {page_id} needs a source with a configured base_url"
+        )
+    response = client.get(
+        f"{cfg.base_url.rstrip('/')}/wiki/api/v2/pages/{page_id}",
+        params={"body-format": "export_view"},
+        headers={**headers, "Accept": "application/json"},
+    )
+    response.raise_for_status()
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ParseFailure(
+            f"confluence page {page_id} did not return JSON: {exc}"
+        ) from exc
+    body = ((payload.get("body") or {}).get("export_view") or {}).get("value")
+    if not body:
+        raise EmptyDocument(f"confluence page {page_id} returned an empty body")
+    return body.encode("utf-8"), CONFLUENCE_CONTENT_TYPE
+
+
+def _fetch_confluence_attachment(
+    client: httpx.Client,
+    page_id: str,
+    attachment_id: str,
+    cfg: SourceConfig | None,
+    headers: dict,
+) -> tuple[bytes, str | None]:
+    """An attachment's bytes, through the v1 content API.
+
+    This is the path the v2 attachment's own `downloadLink` names. The
+    /wiki/download/attachments/... URL in doc_url is the browser route: it
+    answers Basic auth with a 401 HTML error page, which then reaches the
+    parsers as text/html (measured 2026-07-30).
+    """
+    if cfg is None or not cfg.base_url:
+        raise ParseFailure(
+            f"confluence attachment {attachment_id} needs a source with a "
+            f"configured base_url"
+        )
+    response = client.get(
+        f"{cfg.base_url.rstrip('/')}/wiki/rest/api/content/{page_id}"
+        f"/child/attachment/{attachment_id}/download",
+        headers=headers,
+    )
+    response.raise_for_status()
+    return response.content, response.headers.get("content-type")
 
 
 def _ledger_for_batch(conn, manifest_ids: set[int]) -> dict[int, dict]:
@@ -249,7 +366,8 @@ def run_parse_batch(
 
 def _process_doc(
     doc: dict,
-    manifest_row: dict | None,
+    # never None: run_parse_batch raises on a batch doc without a sighting
+    manifest_row: dict,
     ledger_row: dict | None,
     cfg: SourceConfig | None,
     settings,
@@ -262,7 +380,7 @@ def _process_doc(
     that were written."""
     url = manifest_row["doc_url"]
     try:
-        raw, header_ct = _fetch(client, url, cfg)
+        raw, header_ct = _fetch(client, manifest_row, cfg, settings)
         content_sha = hashlib.sha256(raw).hexdigest()
         content_type = detect_content_type(header_ct, url, raw)
         markdown, parser_version = parse_document(
@@ -272,6 +390,29 @@ def _process_doc(
         quality = {"markdown_chars": len(markdown)}
         if content_type == "application/pdf":
             quality.update(pdf_quality(raw))
+    # before the ParseFailure clause below: EmptyDocument is a subclass of it.
+    # A document with no text is not a failure — it is recorded, carries no
+    # chunks, and the embed stage drops its vectors and marks the ledger 'empty'.
+    except EmptyDocument as exc:
+        logger.info("empty document %s: %s", url, exc)
+        outcome = {
+            "status": "skipped_empty",
+            "error": None,
+            # content_sha and parser_version are left out: the raise can come
+            # from the fetch, before either exists, and both columns are nullable
+            "text_sha": EMPTY_TEXT_SHA,
+            "node_count": 0,
+            "parse_quality": {"markdown_chars": 0, "empty_reason": str(exc)},
+        }
+        with engine.begin() as conn:
+            # a doc that had text before and is empty now must not keep its chunks
+            conn.execute(
+                delete(staged_nodes).where(
+                    staged_nodes.c.manifest_id == doc["manifest_id"]
+                )
+            )
+            _write_outcome_conn(conn, doc, outcome)
+        return outcome
     # OSError covers the file:/// branch (missing file, permissions)
     except (httpx.HTTPError, OSError, ParseFailure) as exc:
         logger.warning("parse error for %s: %s", url, exc)

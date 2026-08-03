@@ -3,9 +3,12 @@ from pathlib import Path
 import pytest
 
 from rag_parse_chunk.parsers import (
+    CONFLUENCE_CONTENT_TYPE,
+    EmptyDocument,
     ParseFailure,
     _strip_parser_noise,
     detect_content_type,
+    parse_confluence,
     parse_document,
     parse_html,
     pdf_quality,
@@ -69,9 +72,62 @@ class TestParseHtml:
         assert "Privacy" not in markdown  # boilerplate stripped
         assert version.startswith("trafilatura-")
 
-    def test_empty_html_fails(self):
-        with pytest.raises(ParseFailure):
+    def test_empty_html_is_an_empty_document(self):
+        with pytest.raises(EmptyDocument):
             parse_html(b"<html><body></body></html>")
+
+
+class TestParseConfluence:
+    """A Confluence body is already the article, so it goes through markdownify
+    rather than trafilatura — see the parser's docstring."""
+
+    @staticmethod
+    def _markdown():
+        raw = (FIXTURES / "confluence_export_view.html").read_bytes()
+        return parse_document(raw, CONFLUENCE_CONTENT_TYPE)
+
+    def test_keeps_headings(self):
+        # the chunker turns headings into section_path, which reaches citations
+        markdown, _ = self._markdown()
+        assert "# Zweck" in markdown
+        assert "## Risikoarten" in markdown
+        assert "## Ablauf" in markdown
+
+    def test_keeps_tables_and_lists(self):
+        markdown, _ = self._markdown()
+        assert "| Adressenausfallrisiko | ja | Kreditrisikocontrolling |" in markdown
+        assert "1. Erhebung der Risiken je Fachbereich" in markdown
+
+    def test_keeps_expanded_macro_text(self):
+        # export_view renders macros; their text is content, not chrome
+        markdown, _ = self._markdown()
+        assert "Stichtag ist der 30.06." in markdown
+
+    def test_links_become_plain_text(self):
+        markdown, _ = self._markdown()
+        assert "Risikobericht Q2.pdf" in markdown
+        assert "/wiki/download/attachments" not in markdown
+
+    def test_short_page_survives(self):
+        # trafilatura discarded these entirely, which is why it is not used here
+        markdown, _ = parse_confluence(
+            b"<h1>Meldefristen</h1><p>Meldung bis zum 15. Werktag.</p>"
+        )
+        assert "# Meldefristen" in markdown
+        assert "15. Werktag" in markdown
+
+    def test_empty_body_is_an_empty_document(self):
+        # not an error: the page is recorded as skipped_empty and carries no
+        # vectors (see parse_chunk._process_doc)
+        with pytest.raises(EmptyDocument):
+            parse_confluence(b"<div><span></span></div>")
+
+    def test_parser_version_is_distinct_from_the_html_parser(self):
+        # so registering this parser does not reprocess the ECB HTML pages
+        _, confluence_version = self._markdown()
+        _, html_version = parse_html((FIXTURES / "ecb_press_sample.html").read_bytes())
+        assert confluence_version != html_version
+        assert confluence_version.startswith("markdownify-")
 
 
 class TestParsePdf:
@@ -81,9 +137,14 @@ class TestParsePdf:
         assert version.startswith("pymupdf4llm-")
         assert "+layout" in version  # the layout engine drives the output
 
-    def test_no_text_fails(self):
-        with pytest.raises(ParseFailure, match="no text"):
+    def test_no_text_is_an_empty_document(self):
+        with pytest.raises(EmptyDocument, match="no text"):
             parse_document(BLANK_PDF, "application/pdf")
+
+    def test_empty_document_is_still_a_parse_failure(self):
+        # _process_doc's generic except clause catches ParseFailure, so the
+        # EmptyDocument clause has to come first — this pins the relationship
+        assert issubclass(EmptyDocument, ParseFailure)
 
 
 class TestPdfParserOverride:

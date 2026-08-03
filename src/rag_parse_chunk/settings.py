@@ -21,6 +21,11 @@ class Settings:
     user_agent: str
     chunk_size: int
     chunk_overlap: int
+    # Confluence Cloud basic auth (email + API token). Kept out of sources.yaml,
+    # which is committed and baked into the images; Vault supplies these on the
+    # cluster (ARCHITECTURE.md → Deployment). None until a confluence source runs.
+    confluence_email: str | None
+    confluence_api_token: str | None
 
 
 def get_settings() -> Settings:
@@ -28,6 +33,8 @@ def get_settings() -> Settings:
         pg_dsn=os.environ.get("RAG_PG_DSN", DEFAULT_PG_DSN),
         http_timeout=float(os.environ.get("RAG_HTTP_TIMEOUT", "30")),
         user_agent=os.environ.get("RAG_HTTP_USER_AGENT", DEFAULT_USER_AGENT),
+        confluence_email=os.environ.get("RAG_CONFLUENCE_EMAIL"),
+        confluence_api_token=os.environ.get("RAG_CONFLUENCE_API_TOKEN"),
         chunk_size=int(os.environ.get("RAG_CHUNK_SIZE", DEFAULT_CHUNK_SIZE)),
         chunk_overlap=int(os.environ.get("RAG_CHUNK_OVERLAP", DEFAULT_CHUNK_OVERLAP)),
     )

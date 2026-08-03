@@ -22,3 +22,15 @@ sources:
     glob: "**/*.pdf"
     default_language: de
     detect_deletions: true    # full directory scan = complete snapshot, so absence is a real deletion
+
+  confluence_quant:
+    type: confluence
+    source_system: confluence
+    base_url: https://get-capital.atlassian.net
+    space_key: QUA
+    label: RAG
+    include_attachments: false   # attachments deferred to a later iteration
+                                 # (ARCHITECTURE.md block 1); pages only for now
+    doc_type: wiki_page
+    default_language: en
+    detect_deletions: true

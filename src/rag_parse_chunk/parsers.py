@@ -15,9 +15,12 @@ import re
 import pymupdf
 import pymupdf4llm
 import trafilatura
+from markdownify import markdownify
 
 __all__ = [
     "ParseFailure",
+    "EmptyDocument",
+    "CONFLUENCE_CONTENT_TYPE",
     "PARSER_REGISTRY",
     "PDF_PARSERS",
     "detect_content_type",
@@ -31,8 +34,19 @@ class ParseFailure(Exception):
     the batch carries on."""
 
 
+class EmptyDocument(ParseFailure):
+    """The document itself has no text — an empty Confluence page, a scanned
+    PDF with OCR off. Not a failure: the doc is recorded as 'skipped_empty'
+    and carries no vectors (see parse_chunk.py). A ParseFailure subclass so
+    callers that only care about "no text came out" keep working."""
+
+
 def _html_parser_version() -> str:
     return f"trafilatura-{trafilatura.__version__}-md1"
+
+
+def _confluence_parser_version() -> str:
+    return f"markdownify-{importlib.metadata.version('markdownify')}-confluence1"
 
 
 def _pdf_parser_version(layout: bool) -> str:
@@ -86,8 +100,29 @@ def parse_html(raw: bytes) -> tuple[str, str]:
         with_metadata=False,
     )
     if not markdown or not markdown.strip():
-        raise ParseFailure("trafilatura extracted no content")
+        raise EmptyDocument("trafilatura extracted no content")
     return markdown, _html_parser_version()
+
+
+def parse_confluence(raw: bytes) -> tuple[str, str]:
+    """A Confluence page's rendered body (export_view) → Markdown.
+
+    markdownify, not trafilatura: trafilatura looks for an article inside a full
+    web page and drops the rest. A Confluence body is already just the article,
+    so that only costs content — measured 2026-07-29 on a rendered page, it
+    dropped every heading (which the chunker turns into section_path, so it
+    reaches the citations) and threw away short pages entirely. markdownify does
+    a straight tag-by-tag conversion with no content detection.
+
+    Links are stripped to their text, as parse_html does: a chunk's citation is
+    the source_url in its metadata, not a URL inside the text.
+    """
+    html = raw.decode("utf-8", errors="replace")
+    markdown = markdownify(html, heading_style="ATX", strip=["a", "img"])
+    markdown = re.sub(r"\n{3,}", "\n\n", markdown).strip()
+    if not any(char.isalnum() for char in markdown):
+        raise EmptyDocument("the Confluence page body has no text")
+    return markdown, _confluence_parser_version()
 
 
 def _parse_pdf(raw: bytes, layout: bool) -> tuple[str, str]:
@@ -111,7 +146,7 @@ def _parse_pdf(raw: bytes, layout: bool) -> tuple[str, str]:
     # a text-free page can still come back as bare Markdown punctuation (a
     # stray '#'), so emptiness is decided on alphanumerics, not on length
     if not any(char.isalnum() for char in markdown):
-        raise ParseFailure("pymupdf4llm extracted no text (scanned PDF? OCR is off)")
+        raise EmptyDocument("pymupdf4llm extracted no text (scanned PDF? OCR is off)")
     return markdown, _pdf_parser_version(layout)
 
 
@@ -131,10 +166,15 @@ def parse_pdf_fast(raw: bytes) -> tuple[str, str]:
     return _parse_pdf(raw, layout=False)
 
 
+# Not a real media type: the fetcher tags a Confluence page body with it so the
+# rendered wiki HTML reaches parse_confluence instead of parse_html.
+CONFLUENCE_CONTENT_TYPE = "application/vnd.confluence.export+html"
+
 PARSER_REGISTRY = {
     "text/html": parse_html,
     "application/xhtml+xml": parse_html,
     "application/pdf": parse_pdf,
+    CONFLUENCE_CONTENT_TYPE: parse_confluence,
 }
 
 # PDF parsers a source may pick between (sources.yaml `pdf_parser`); the
