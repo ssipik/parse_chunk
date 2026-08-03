@@ -2,8 +2,8 @@
 services:
   pipeline:
     build: .
-    # command: python -m rag_parse_chunk --batch-id all-20260728T135105Z
-    command: tail -f /dev/null
+    command: python -m rag_parse_chunk --batch-id all-20260728T135105Z
+    # command: tail -f /dev/null
     volumes:
       # live-mount code + config over the image copies (edit without rebuild)
       - ./src:/app
