@@ -6,12 +6,12 @@
     "configurations": [
 
         {
-            "name": "Python Debugger: Module",
+            "name": "pag_parse_chunk",
             "type": "debugpy",
             "request": "launch",
             "module": "rag_parse_chunk",
             "args": [
-                "--batch-id", "23",
+                "--batch-id", "30",
             ],
         }
     ]
