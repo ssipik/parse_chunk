@@ -28,7 +28,7 @@ from rag_parse_chunk.parsers import (
     pdf_quality,
 )
 from rag_parse_chunk.settings import get_settings
-from rag_parse_chunk.sources import SourceConfig, load_sources
+from rag_config import SourceConfig, load_sources
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +272,7 @@ def _ledger_for_batch(conn, manifest_ids: set[int]) -> dict[int, dict]:
 
 
 def run_parse_batch(
-    config_path: str | Path,
+    config_path: str | Path | None,
     batch_id: int,
     engine: Engine | None = None,
     client: httpx.Client | None = None,

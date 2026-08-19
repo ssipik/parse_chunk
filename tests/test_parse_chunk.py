@@ -12,7 +12,7 @@ from rag_parse_chunk.parse_chunk import (
 )
 from rag_parse_chunk.parsers import CONFLUENCE_CONTENT_TYPE, ParseFailure
 from rag_parse_chunk.settings import get_settings
-from rag_parse_chunk.sources import SourceConfig
+from rag_config import SourceConfig
 
 # get_settings() reads the environment, so build the Confluence credentials on
 # top of it rather than depend on what is exported

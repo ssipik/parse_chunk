@@ -17,6 +17,8 @@ import pymupdf4llm
 import trafilatura
 from markdownify import markdownify
 
+from rag_config import load_params
+
 __all__ = [
     "ParseFailure",
     "EmptyDocument",
@@ -188,7 +190,7 @@ PDF_PARSERS = {
 
 # A page under this many characters of extracted text carries its content in
 # graphics the parsers cannot read — a chart or a scan, contributing nothing.
-_LOW_TEXT_CHARS_PER_PAGE = 200
+# The threshold comes from rag-config's parameters.yaml.
 
 
 def pdf_quality(raw: bytes) -> dict:
@@ -219,15 +221,16 @@ def pdf_quality(raw: bytes) -> dict:
 
     text_chars = sum(chars for chars, _ in pages)
     per_page = text_chars / (len(pages) or 1)
+    low_text_chars_per_page = load_params().parse_chunk.low_text_chars_per_page
     return {
         "pages": len(pages),
         "text_chars": text_chars,
         "chars_per_page": round(per_page),
         "image_coverage": round(max((cov for _, cov in pages), default=0.0), 2),
         "pages_low_text": sum(
-            1 for chars, _ in pages if chars < _LOW_TEXT_CHARS_PER_PAGE
+            1 for chars, _ in pages if chars < low_text_chars_per_page
         ),
-        "low_text": per_page < _LOW_TEXT_CHARS_PER_PAGE,
+        "low_text": per_page < low_text_chars_per_page,
     }
 
 

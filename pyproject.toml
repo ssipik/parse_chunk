@@ -4,10 +4,12 @@ version = "0.1.0"
 description = "Pipeline module for the agentic RAG pipeline (stage 4: parse+chunk — fetch, normalize to Markdown, chunk, stage nodes)"
 requires-python = ">=3.13"
 dependencies = [
+    "rag-config",
     "pydantic>=2.7",
     "PyYAML>=6.0",
     "SQLAlchemy>=2.0",
     "psycopg[binary]>=3.1",
+    "dotenv>=0.9.9",
     "httpx>=0.27",
     "trafilatura>=2.0",
     "markdownify>=1.1",
@@ -21,6 +23,9 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+
+[tool.uv.sources]
+rag-config = { git = "https://bitbucket.org/get-capital/config.git", rev = "main" }
 
 [build-system]
 requires = ["hatchling"]

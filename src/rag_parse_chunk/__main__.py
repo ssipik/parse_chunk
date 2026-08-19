@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
+
+from dotenv import load_dotenv
 
 from rag_parse_chunk.parse_chunk import run_parse_batch
 
@@ -30,11 +31,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="batch to process (a rag_plan batch id); repeatable for dev runs "
         "— in the DAG each mapped task gets exactly one",
     )
-    parser.add_argument(
-        "--config",
-        default=os.environ.get("RAG_SOURCES_PATH", "config/sources.yaml"),
-        help="path to sources.yaml (default: $RAG_SOURCES_PATH or %(default)s)",
-    )
     return parser
 
 
@@ -45,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     for batch_id in args.batch_ids:
         try:
-            report = run_parse_batch(args.config, batch_id)
+            report = run_parse_batch(config_path=None, batch_id=batch_id)
         except (ValueError, FileNotFoundError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
@@ -54,4 +50,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # Only needed when running in development. In production the env variables are provided by Vault.
+    load_dotenv()
     raise SystemExit(main())

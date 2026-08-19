@@ -19,7 +19,8 @@ def test_batch_id_must_be_an_int():
         build_parser().parse_args(["--batch-id", "r1-babc"])
 
 
-def test_main_missing_config_exits_2(capsys):
-    rc = main(["--batch-id", "1", "--config", "/nonexistent/sources.yaml"])
+def test_main_missing_config_exits_2(capsys, monkeypatch):
+    monkeypatch.setenv("RAG_SOURCES_PATH", "/nonexistent/sources.yaml")
+    rc = main(["--batch-id", "1"])
     assert rc == 2
     assert "error:" in capsys.readouterr().err

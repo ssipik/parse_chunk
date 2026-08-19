@@ -15,7 +15,7 @@ uv sync --frozen --extra dev        # lock-exact venv from uv.lock
 .venv/bin/python -m pytest          # offline tests (parsers, chunker, pure logic)
 
 # Parse one batch (Postgres from ../postgres must be up; fetches live URLs)
-python -m rag_parse_chunk --batch-id <id> [--config config/sources.yaml]
+python -m rag_parse_chunk --batch-id <id>
 
 # Containerized
 docker compose run --rm --build pipeline python -m rag_parse_chunk --batch-id <id>
