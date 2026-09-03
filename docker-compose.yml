@@ -1,14 +1,18 @@
 # One-off runs: docker compose run --rm pipeline python -m rag_parse_chunk --batch-id <id>
 services:
   pipeline:
-    build: .
+    build:
+      context: .
+      secrets:
+        - git_token
     command: python -m rag_parse_chunk --batch-id all-20260728T135105Z
     # command: tail -f /dev/null
     volumes:
       # live-mount code over the image copy (edit without rebuild); sources.yaml
       # and parameters.yaml come from the rag-config dependency, not from here
       - ./src:/app
-      - ../data:/app/data
+      # not /app/data: sources.yaml scans local_files paths relative to the CWD
+      - ../data:/data
       - ./.vscode:/app/.vscode
     env_file:
       - path: .env
@@ -16,3 +20,9 @@ services:
     environment:
       # overrides .env: host.docker.internal = the host machine, where ../postgres publishes 5433
       RAG_PG_DSN: postgresql+psycopg://rag:rag@host.docker.internal:5433/rag_ingestion
+
+# Build-time only: the private rag-config repo is cloned by `uv sync` in the
+# Dockerfile. BuildKit mounts this for that one RUN, so no layer holds it.
+secrets:
+  git_token:
+    environment: BITBUCKET_API_TOKEN
