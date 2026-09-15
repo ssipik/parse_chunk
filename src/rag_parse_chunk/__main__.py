@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         dest="batch_ids",
         help="batch to process (a rag_plan batch id); repeatable for dev runs "
-        "— in the DAG each mapped task gets exactly one",
+        "— on the cluster each Nomad dispatch gets exactly one",
     )
     return parser
 

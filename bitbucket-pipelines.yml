@@ -1,35 +1,92 @@
-# This is an example Starter pipeline configuration
-# Use a skeleton to build, test and deploy using manual and parallel steps
-# -----
-# You can specify a custom docker image from Docker Hub as your build environment.
+definitions:
+  services:
+    docker:
+      memory: 15360 # Increase Docker service memory to 3GB to avoid out of memory issues during builds.
+  # steps:
+  #   - step: &build-step
+  #       name: SonarQube analysis
+  #       runs-on:
+  #         - self.hosted
+  #         - linux
+  #       size: 4x
+  #       script:
+  #         - |
+  #           echo "Checking for coverage.xml artifact..."
+  #           if [ -f coverage.xml ]; then
+  #             echo "✓ coverage.xml found"
+  #             ls -lh coverage.xml
+  #           else
+  #             echo "✗ coverage.xml not found in workspace"
+  #             ls -la | grep -i coverage || echo "No coverage files found"
+  #           fi
+  #         - pipe: sonarsource/sonarqube-scan:3.0.2  
+  #           variables:
+  #             SONAR_HOST_URL: ${SONAR_HOST_URL} # Get the value from the repository/workspace variable.
+  #             SONAR_TOKEN: ${SONAR_TOKEN} # Get the value from the repository/workspace variable. You shouldn't set secret in clear text here.
+  #             EXTRA_ARGS: >
+  #               -Dsonar.scanner.skipJreProvisioning=true
+  # caches:
+  #   sonar: ~/.sonar
 
-image: atlassian/default-image:3
+clone:
+  depth: full
 
 pipelines:
-  default:
-    - parallel:
+  branches:
+    # IT-260-rewrite-vawlreport-in-python:
+    #   - step:
+    #       name: Push image to Azure Container Registry (acr)
+    #       size: 8x
+    #       script:
+    #         # Login to Azure ACR before building
+    #         - echo $DOCKER_REGISTRY_SERVER_PASSWORD | docker login getregistry.azurecr.io --username $DOCKER_REGISTRY_SERVER_USER --password-stdin
+    #         # Build the Docker image
+    #         - export DOCKER_BUILDKIT=1
+    #         - docker build --secret id=git_token,env=RAG_BITBUCKET_API_TOKEN -t rag_parse_chunk -t rag_parse_chunk:$BITBUCKET_COMMIT -f ./Dockerfile .
+    #         # Use the pipe to push the image to Azure ACR
+    #         - pipe: atlassian/azure-acr-push-image:0.3.0
+    #           variables:
+    #             AZURE_TOKEN_NAME: $DOCKER_REGISTRY_SERVER_USER
+    #             AZURE_TOKEN_PWD: $DOCKER_REGISTRY_SERVER_PASSWORD
+    #             AZURE_REGISTRY: "https://getregistry.azurecr.io"
+    #             IMAGE_NAME: "rag_parse_chunk"
+    #             TAGS: 'latest $BITBUCKET_COMMIT'
+    
+    main:
+      # - step: *build-step
       - step:
-          name: 'Build and Test'
+          name: Push image to Azure Container Registry (acr)
+          size: 8x
           script:
-            - echo "Your build and test goes here..."
-      - step:
-          name: 'Lint'
-          script:
-            - echo "Your linting goes here..."
-      - step:
-          name: 'Security scan'
-          script:
-            - echo "Your security scan goes here..."
+            # Login to Azure ACR before building
+            - echo $DOCKER_REGISTRY_SERVER_PASSWORD | docker login getregistry.azurecr.io --username $DOCKER_REGISTRY_SERVER_USER --password-stdin
+            # Build the Docker image; rag-config is a private git dependency, so the
+            # token goes in as a BuildKit secret (see Dockerfile), never a build arg
+            - export DOCKER_BUILDKIT=1
+            - docker build --secret id=git_token,env=RAG_BITBUCKET_API_TOKEN -t rag_parse_chunk -t rag_parse_chunk:$BITBUCKET_COMMIT -f ./Dockerfile .
+            # Use the pipe to push the image to Azure ACR
+            - pipe: atlassian/azure-acr-push-image:0.3.0
+              variables:
+                AZURE_TOKEN_NAME: $DOCKER_REGISTRY_SERVER_USER
+                AZURE_TOKEN_PWD: $DOCKER_REGISTRY_SERVER_PASSWORD
+                AZURE_REGISTRY: "https://getregistry.azurecr.io"
+                IMAGE_NAME: "rag_parse_chunk"
+                TAGS: 'latest $BITBUCKET_COMMIT'
 
-    # The following deployment steps will be executed for each pipeline run. To configure your steps and conditionally deploy see https://support.atlassian.com/bitbucket-cloud/docs/configure-bitbucket-pipelinesyml/
-    - step:
-        name: 'Deployment to Staging'
-        deployment: staging
-        script:
-          - echo "Your deployment to staging script goes here..."
-    - step:
-        name: 'Deployment to Production'
-        deployment: production
-        trigger: 'manual'
-        script:
-          - echo "Your deployment to production script goes here..."
+      - step:
+          name: Register jobs in Nomad
+          runs-on:
+            - self.hosted
+            - linux
+          image: debian:bookworm-slim
+          script:
+            - apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip
+            - ARCH="$(uname -m)"; case "$ARCH" in x86_64) NA=amd64;; aarch64|arm64) NA=arm64;; *) echo "Unsupported $ARCH"; exit 1;; esac
+            - NOMAD_VER=1.7.4
+            - curl -fsSLo /tmp/nomad.zip "https://releases.hashicorp.com/nomad/${NOMAD_VER}/nomad_${NOMAD_VER}_linux_${NA}.zip"
+            - unzip -d /usr/local/bin /tmp/nomad.zip && chmod +x /usr/local/bin/nomad
+            - export PATH=$PATH:/usr/local/bin
+            - nomad version
+            - export NOMAD_ADDR=$NOMAD_ADDR
+            - export NOMAD_TOKEN=$NOMAD_TOKEN
+            - nomad job run -var="image_repo=getregistry.azurecr.io/rag_parse_chunk" -var="image_tag=${BITBUCKET_COMMIT}" nomad_rag_parse_chunk.hcl

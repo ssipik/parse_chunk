@@ -25,4 +25,4 @@ services:
 # Dockerfile. BuildKit mounts this for that one RUN, so no layer holds it.
 secrets:
   git_token:
-    environment: BITBUCKET_API_TOKEN
+    environment: RAG_BITBUCKET_API_TOKEN

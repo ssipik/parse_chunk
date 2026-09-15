@@ -12,10 +12,12 @@ Stage 4 (PARSE+CHUNK) of the six-stage ingestion skeleton — `../ARCHITECTURE.m
 uv sync --frozen --extra dev                    # lock-exact venv
 .venv/bin/python -m pytest                      # offline tests (no network, no DB)
 python -m rag_parse_chunk --batch-id <id>       # parse one batch (needs ../postgres up; fetches live URLs)
+# cluster: nomad job dispatch -meta batch_id=<id> rag-parse-chunk-template
 ```
 
 ## Invariants
 
+- **Deployed as one Nomad dispatch per batch** (`nomad_rag_parse_chunk.hcl`, `meta batch_id`; decided 2026-09-15, `../masterplan/ARCHITECTURE.md` block 11). Airflow's `NomadMultiDispatchOperator` (in the `airflow_dags` repo) reads the run's open batches from Postgres and keeps at most N dispatches running. The stage itself stays per batch: no run-level code here.
 - **Library-first, thin `__main__`**: stage logic in `rag_parse_chunk.parse_chunk.run_parse_batch()`; `__main__.py` is a logic-free argparse wrapper.
 - **This is the only stage that downloads document content** (block 11: fetched live per batch, after delta discarded the ~95 % unchanged). Raw bytes never enter Postgres; chunk text enters only the transient `staged_nodes`.
 - **Auth is per request, never on the client** (`_auth_headers`): one batch mixes sources, so Confluence credentials must not ride along on a public ECB fetch. Only `type: confluence` sources get a header today.
