@@ -265,3 +265,35 @@ class TestFetchConfluence:
         client = FakeClient(FakeResponse(content=b"<html/>", content_type="text/html"))
         _fetch(client, _row("https://www.ecb.europa.eu/x.html"), CFG, SETTINGS)
         assert client.calls[0]["headers"] == {}
+
+
+class TestBatchWithoutDocuments:
+    """No input is not an error: an unknown or empty batch parses nothing and succeeds."""
+
+    class EmptyEngine:
+        def connect(self):
+            from contextlib import contextmanager
+
+            @contextmanager
+            def conn():
+                class Result:
+                    def mappings(self):
+                        return []
+
+                class Conn:
+                    def execute(self, stmt):
+                        return Result()
+
+                yield Conn()
+
+            return conn()
+
+    def test_empty_batch_reports_nothing(self):
+        import httpx
+
+        from rag_parse_chunk.parse_chunk import run_parse_batch
+
+        client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+        report = run_parse_batch(None, 999, engine=self.EmptyEngine(), client=client)
+        assert report.batch_id == 999
+        assert all(v == 0 for v in report.counts.values())

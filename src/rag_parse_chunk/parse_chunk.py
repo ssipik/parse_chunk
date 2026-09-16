@@ -14,7 +14,6 @@ from rag_parse_chunk.chunker import chunk_markdown
 from rag_parse_chunk.db import (
     get_engine,
     ingest_batch_docs,
-    ingest_batches,
     ingest_docs,
     ingest_manifest,
     staged_nodes,
@@ -297,11 +296,7 @@ def run_parse_batch(
     )
 
     with engine.connect() as conn:
-        batch = conn.execute(
-            select(ingest_batches).where(ingest_batches.c.batch_id == batch_id)
-        ).mappings().first()
-        if batch is None:
-            raise ValueError(f"unknown batch {batch_id!r} — did plan run?")
+        # No input is not an error here: a batch without documents parses nothing.
         batch_docs = [
             dict(r)
             for r in conn.execute(
