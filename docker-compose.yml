@@ -14,6 +14,7 @@ services:
       # not /app/data: sources.yaml scans local_files paths relative to the CWD
       - ../data:/data
       - ./.vscode:/app/.vscode
+      - /mnt/zdrive:/mnt/zdrive
     env_file:
       - path: .env
         required: false
