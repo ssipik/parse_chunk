@@ -1493,7 +1493,11 @@ wheels = [
 [[package]]
 name = "rag-config"
 version = "0.1.0"
+<<<<<<< HEAD
 source = { git = "https://bitbucket.org/get-capital/config.git?rev=main#df5a60c73514b1b1744c405e585fb2a776fc5aa8" }
+=======
+source = { git = "https://github.com/ssipik/config.git?rev=main#4652cdcc13c4441558ef9953a07c21b504e2180b" }
+>>>>>>> 29c9283 (updated config)
 dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -1537,7 +1541,7 @@ requires-dist = [
     { name = "pymupdf4llm", specifier = ">=1.28" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "rag-config", git = "https://bitbucket.org/get-capital/config.git?rev=main" },
+    { name = "rag-config", git = "https://github.com/ssipik/config.git?rev=main" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "trafilatura", specifier = ">=2.0" },
 ]

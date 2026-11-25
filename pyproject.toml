@@ -25,7 +25,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-rag-config = { git = "https://bitbucket.org/get-capital/config.git", rev = "main" }
+rag-config = { git = "https://github.com/ssipik/config.git", rev = "main" }
 
 [build-system]
 requires = ["hatchling"]
